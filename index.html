@@ -6463,6 +6463,11 @@
                 },
 
                 savePatient() {
+                    if (this.cloudSyncEnabled && navigator.onLine && this.cloudAuthReady && this.cloudMembershipReady && (!this.cloudServerHydrated || this.remoteHydrationState !== 'hydrated')) {
+                        this.cloudStatus = 'connecting';
+                        alert('جارٍ تحميل بيانات العيادة من السحابة. انتظر اكتمال الاتصال ثم احفظ الزيارة مرة أخرى حتى تظهر على جميع الأجهزة.');
+                        return;
+                    }
                     if (!this.patientForm.fullName.trim()) return;
                     const validPhone = this.validateAndNormalizePhone(this.patientForm.phone);
                     if (validPhone === null) return;
@@ -6554,6 +6559,7 @@
                         this.recentRegisteredPatients = [{ id: savedPatient.id, name: savedPatient.fullName, visitType: savedPatient.visitType, createdAt: new Date().toISOString() }, ...(this.recentRegisteredPatients || [])].slice(0, 8);
                     }
                     if (addedWaitingItem && String(addedWaitingItem.patientId ?? '') === String(savedPatient?.id ?? '')) this.announceWaitingArrival(addedWaitingItem, 'visit_registration');
+                    this.markLocalSyncChange();
                     this.persistState();
                     this.queueCloudSync(0);
                     this.showFlashNotice(`تم تسجيل زيارة ${savedPatient?.fullName || ''} وتوليد الفاتورة`);
@@ -6639,6 +6645,11 @@
 
                 addMedicalRecord() {
                     try {
+                        if (this.cloudSyncEnabled && navigator.onLine && this.cloudAuthReady && this.cloudMembershipReady && (!this.cloudServerHydrated || this.remoteHydrationState !== 'hydrated')) {
+                            this.cloudStatus = 'connecting';
+                            alert('جارٍ تحميل بيانات العيادة من السحابة. انتظر اكتمال الاتصال ثم احفظ الروشتة مرة أخرى.');
+                            return;
+                        }
                         if (!this.selectedPatientForRecord) {
                             alert('يرجى اختيار ملف مريض قبل حفظ الزيارة');
                             return;
@@ -6744,6 +6755,7 @@
                             selectedRadiology: [], customRadiology: '',
                             selectedMedicinesWithDosage: [], nextFollowUpDate: '', generalNotes: ''
                         };
+                        this.markLocalSyncChange();
                         this.persistState();
                         this.queueCloudSync(0);
                         this.renderIcons();
