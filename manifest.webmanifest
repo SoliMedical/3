@@ -1,0 +1,17 @@
+{
+  "name": "Soli Medical — عيادة الطبيب الواحد",
+  "short_name": "Soli Medical",
+  "description": "نظام إدارة العيادة والمرضى والروشتات",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#08111f",
+  "theme_color": "#0f2d4a",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
