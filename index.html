@@ -10,8 +10,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="عيادة 2">
     <link rel="manifest" href="./manifest.webmanifest?v=v2.5.15-clinic2">
-    <link rel="icon" href="./icons/icon-192.png" type="image/png">
-    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <link rel="icon" href="./icons/icon.png" type="image/png">
+    <link rel="apple-touch-icon" href="./icons/icon.png">
     <!-- Tailwind CSS with Dark Mode Support -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -51,6 +51,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+    <script src="./firebase-config.js?v=clinic2-v2515"></script>
     <script>
         // Firebase Web configuration is public. This fallback keeps the original UI on
         // Firebase2 if a stale service-worker cache responds with HTML for the config asset.
@@ -572,8 +573,6 @@
                 cloudStatus: 'offline', // 'connecting' | 'online' | 'offline'
                 cloudAuthReady: false,
                 cloudServerHydrated: false,
-                // لا يُسمح بأي رفع محلي قبل أول قراءة موثوقة من Firestore في جلسة الدخول.
-                remoteHydrationState: 'idle', // idle | reading-server | hydrated | blocked
                 authRestorePending: Boolean(isFirebaseConfigured),
                 v2OperationalErrors: [],
                 v2OperationalRequiredCollections: [],
@@ -851,7 +850,7 @@
                     fullName: '',
                     phone: '',
                     age: '',
-                    gender: 'غير محدد',
+                    gender: 'ذكر',
                     bloodType: '',
                     visitType: 'كشف',
                     selectedSymptoms: [],
@@ -863,7 +862,7 @@
                     fullName: '',
                     phone: '',
                     age: '',
-                    gender: 'غير محدد',
+                    gender: 'ذكر',
                     bloodType: ''
                 },
 
@@ -1295,29 +1294,7 @@
                 hasPendingSyncWork() {
                     return Boolean(this.localChangesPending || this.syncJournal?.pendingState || (this.syncJournal?.pendingOperations || []).length);
                 },
-                beginAuthoritativeRemoteHydration() {
-                    if (this.remoteHydrationState === 'hydrated' || this.remoteHydrationState === 'reading-server') return false;
-                    if (this.hasPendingSyncWork()) this.saveConflictRecoverySnapshot(this.getSyncDataSnapshot());
-                    this.remoteHydrationState = 'reading-server';
-                    this.cloudServerHydrated = false;
-                    this.syncSafetyHold = true;
-                    this.syncSafetyHoldReason = 'جارٍ تثبيت أحدث نسخة من الخادم؛ لن تُرفع النسخة المحلية القديمة.';
-                    this.localChangesPending = false;
-                    this.localEditBaseRevision = 0;
-                    this.syncJournal = { ...this.normalizeSyncJournal(), pendingState: false, pendingOperations: [], completedTombstones: [], baseRevision: 0 };
-                    return true;
-                },
-                completeAuthoritativeRemoteHydration() {
-                    this.remoteHydrationState = 'hydrated';
-                    this.cloudServerHydrated = true;
-                    this.syncSafetyHold = false;
-                    this.syncSafetyHoldReason = '';
-                    this.localChangesPending = false;
-                    this.syncJournal = { ...this.normalizeSyncJournal(), pendingState: false, pendingOperations: [] };
-                },
                 markLocalSyncChange() {
-                    // تغييرات الإقلاع أو cache القديم ليست تعديلات للمستخدم ولا يجوز رفعها.
-                    if (this.cloudSyncEnabled && this.remoteHydrationState !== 'hydrated') return 0;
                     const journal = this.normalizeSyncJournal();
                     const nextSequence = Math.max(Number(this.syncChangeSequence || 0), Number(journal.nextSequence || 0)) + 1;
                     if (!this.localChangesPending) this.localEditBaseRevision = Number(this.syncRevision || journal.baseRevision || 0);
@@ -1890,8 +1867,6 @@
                     // لأن ذلك يعيد علم hydration إلى false فوق cache صحيح.
                     if (this.cloudCutoverConfigurationChecked && this.isOperationalDocumentSyncActive() &&
                         (this.v2OperationalInitialLoadInFlight || this.v2OperationalUnsubscribers.length)) return;
-                    // كل جلسة مصادقة تبدأ بقراءة server authoritative؛ لا نعيد استخدام outbox قديم.
-                    this.beginAuthoritativeRemoteHydration();
                     this.cloudSyncStartInFlight = true;
                     this.loadOperationalSyncConfiguration().then(approvedCutover => {
                         this.cloudCutoverConfigurationError = '';
@@ -1961,10 +1936,12 @@
                             // First protected sync: the first authenticated device establishes
                             // the shared clinic snapshot, including data created while offline.
                             if (!snap.exists) {
-                                // مستند غير موجود يعني حالة سحابية فارغة، وليس إذناً برفع cache قديم.
-                                this.protectedClinicalSyncKeys().forEach(key => { this[key] = []; });
-                                this.completeAuthoritativeRemoteHydration();
-                                this.persistState();
+                                this.cloudServerHydrated = true;
+                                if (!this.localChangesPending) {
+                                    this.localEditBaseRevision = 0;
+                                    this.localChangesPending = true;
+                                }
+                                this.queueCloudSync();
                                 return;
                             }
                             // Ignore the echo of our own write coming back from the server.
@@ -1972,8 +1949,7 @@
                             const data = snap.data();
                             const remoteMeta = data._syncMeta || {};
                             const isExplicitCloudReset = data?._resetMeta?.scope === 'explicit-demo-clinical-and-financial-records' && Boolean(data?._resetMeta?.token);
-                            const isInitialAuthoritativeHydration = this.remoteHydrationState === 'reading-server';
-                            const preservedEmptyRemoteKeys = (isExplicitCloudReset || isInitialAuthoritativeHydration) ? [] : this.persistentKeys.filter(key =>
+                            const preservedEmptyRemoteKeys = isExplicitCloudReset ? [] : this.persistentKeys.filter(key =>
                                 Array.isArray(data?.[key]) && data[key].length === 0 && Array.isArray(this[key]) && this[key].length > 0
                             );
                             // Storage URLs are small and safe to mirror through the legacy
@@ -2002,14 +1978,14 @@
                                 (this.syncJournal?.pendingOperations || []).length === 0;
                             const hasLocalClinicalRecords = ['patients', 'visits', 'appointments', 'invoices', 'prescriptions', 'expenses', 'waitingQueue']
                                 .some(key => Array.isArray(this[key]) && this[key].length > 0);
-                            const shouldPreservePendingLocalSnapshot = !isInitialAuthoritativeHydration && (this.cloudServerHydrated || hasLocalClinicalRecords || this.doctorInfoDirty);
+                            const shouldPreservePendingLocalSnapshot = this.cloudServerHydrated || hasLocalClinicalRecords || this.doctorInfoDirty;
                             const hasPendingLocalWork = shouldPreservePendingLocalSnapshot && this.hasPendingSyncWork() && !remoteAcknowledgesCurrentWrite;
                             const preservePendingLocalSnapshot = hasPendingLocalWork || preservedEmptyRemoteKeys.length > 0;
                             const hasForeignPendingConflict = hasPendingLocalWork &&
                                 remoteMeta.writerId && remoteMeta.writerId !== this.syncDeviceId &&
                                 remoteRevision > Number(this.localEditBaseRevision || 0);
                             const localSnapshot = preservePendingLocalSnapshot ? this.getSyncDataSnapshot() : null;
-                            const preserveNewerDoctorInfo = !isInitialAuthoritativeHydration && data?.doctorInfo !== undefined && !this.shouldApplyRemoteDoctorInfo(data.doctorInfo);
+                            const preserveNewerDoctorInfo = data?.doctorInfo !== undefined && !this.shouldApplyRemoteDoctorInfo(data.doctorInfo);
                             const verifiedRemoteMigration = data?.dataMigration?.status === 'completed' &&
                                 Boolean(data?.dataMigration?.migrationId);
                             const operationalDocumentStore = verifiedRemoteMigration || this.isOperationalDocumentSyncActive();
@@ -2051,7 +2027,9 @@
                                 }
                             });
                             this.visits = this.getLegacyVisitsFromPatients();
-                            this.completeAuthoritativeRemoteHydration();
+                            this.cloudServerHydrated = true;
+                            this.syncSafetyHold = false;
+                            this.syncSafetyHoldReason = '';
                             if (this.cloudStatus === 'blocked') this.cloudStatus = 'online';
                             this.localChangesPending = preservePendingLocalSnapshot || preserveNewerDoctorInfo;
                             if (preservedEmptyRemoteKeys.length || preserveNewerDoctorInfo) this.markLocalSyncChange();
@@ -2181,7 +2159,6 @@
                 // Debounced push so rapid local edits (typing, checkbox toggles) don't spam Firestore.
                 queueCloudSync(delayMs = 600) {
                     if (!this.cloudSyncEnabled || !this.cloudAuthReady || !this.cloudServerHydrated || this.applyingRemoteUpdate || this.doctorInfoEditing || !firestoreDB) return;
-                    if (this.remoteHydrationState !== 'hydrated' || this.syncSafetyHold) return;
                     clearTimeout(this.cloudSyncTimer);
                     this.cloudSyncTimer = setTimeout(() => {
                         if (this.isOperationalDocumentSyncActive()) this.pushStateToV2();
@@ -2889,7 +2866,7 @@
                     };
                     // لا يعتمد اكتمال التحميل على توقيت المستمع الأول فقط؛ نجاح تطبيق
                     // cache السجلي الكامل هو نقطة الإقرار الوحيدة قبل السماح بالكتابة.
-                    this.completeAuthoritativeRemoteHydration();
+                    this.cloudServerHydrated = true;
                     this.ensurePrescriptionPatientIds();
                     this.persistState();
                     this.$nextTick(() => {
@@ -5668,15 +5645,6 @@
                     }
                     if (refundedInvoiceIds.size) this.invoices = (this.invoices || []).filter(invoice => !refundedInvoiceIds.has(String(invoice.id)));
                     this.waitingQueue = (this.waitingQueue || []).filter(entry => String(entry.id) !== String(item.id));
-                    // الزيارة الملغاة بلا روشتة هي مسودة فقط؛ احذفها من البيانات الداخلية أيضاً
-                    // حتى لا تعود إلى ملفات المرضى أو إلى السحابة لاحقاً.
-                    const pendingPatient = (this.patients || []).find(patient => String(patient?.id ?? '') === String(item.patientId ?? ''));
-                    const pendingPatientHasRecords = Array.isArray(pendingPatient?.records) && pendingPatient.records.length > 0;
-                    const pendingPatientHasPrescription = (this.prescriptions || []).some(rx => String(rx?.patientId ?? '') === String(item.patientId ?? ''));
-                    if (pendingPatient && !pendingPatientHasRecords && !pendingPatientHasPrescription) {
-                        if (this.isOperationalDocumentSyncActive() && pendingPatient.id != null) this.queueCloudDeleteOperation('patients', pendingPatient.id, pendingPatient.id);
-                        this.patients = (this.patients || []).filter(patient => String(patient?.id ?? '') !== String(item.patientId ?? ''));
-                    }
                     const appointment = (this.appointments || []).find(entry => entry.id === item.appointmentId);
                     if (appointment) appointment.status = 'cancelled';
                     this.recordAudit(`${actionLabel} من قائمة الانتظار`, `${patientName} — ${hasRefund ? `استرداد ${refundedAmount.toLocaleString('ar-EG')} ج.م وحذف ${refundedInvoiceIds.size} تحصيل` : 'لا يوجد تحصيل مرتبط'}`);
@@ -5754,33 +5722,11 @@
                     });
                 },
 
-                getPatientLatestActivity(patient) {
-                    const records = Array.isArray(patient?.records) ? patient.records : [];
-                    const values = [patient?.createdAt, patient?.date, ...records.map(record => record?.createdAt || record?.date)].filter(Boolean);
-                    return values.reduce((latest, value) => {
-                        const currentTime = Date.parse(value) || 0;
-                        const latestTime = Date.parse(latest) || 0;
-                        return currentTime >= latestTime ? String(value) : latest;
-                    }, '');
-                },
-                formatActivityDate(value) {
-                    if (!value) return '-';
-                    const date = new Date(value);
-                    return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toLocaleDateString('ar-EG');
-                },
-                formatActivityTime(value) {
-                    if (!value || !String(value).includes('T')) return '';
-                    const date = new Date(value);
-                    return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-                },
                 get filteredPatients() {
                     const query = (this.patientSearch || '').trim().toLowerCase();
                     const filtered = (this.patients || []).filter(p => {
                         const records = Array.isArray(p.records) ? p.records : [];
-                        const hasPrescription = (this.prescriptions || []).some(rx => String(rx?.patientId ?? '') === String(p?.id ?? ''));
-                        // لا تعرض المسودات أو الملفات التي لم تُحفظ لها روشتة/زيارة طبية.
-                        if (p?.isPendingVisit || (!records.length && !hasPrescription)) return false;
-                        const latestDate = this.getPatientLatestActivity(p);
+                        const latestDate = records.reduce((latest, record) => record.date > latest ? record.date : latest, '');
                         const diagnosisText = records.map(record => [record.diagnosis, ...(record.diagnosisList || [])].filter(Boolean).join(' ')).join(' ');
                         const searchable = [p.fullName, p.phone, p.visitType, ...(p.selectedSymptoms || []), ...(p.selectedChronicDiseases || []), diagnosisText].filter(Boolean).join(' ').toLowerCase();
                         const matchesQuery = !query || searchable.includes(query);
@@ -5794,9 +5740,10 @@
                     });
                     return filtered.sort((a, b) => {
                         if (this.patientSort === 'name') return (a.fullName || '').localeCompare(b.fullName || '', 'ar');
-                        const aDate = Date.parse(this.getPatientLatestActivity(a)) || 0;
-                        const bDate = Date.parse(this.getPatientLatestActivity(b)) || 0;
-                        return this.patientSort === 'oldest' ? aDate - bDate : bDate - aDate;
+                        const latestDate = patient => (patient.records || []).reduce((latest, record) => record.date > latest ? record.date : latest, '');
+                        const aDate = latestDate(a);
+                        const bDate = latestDate(b);
+                        return this.patientSort === 'oldest' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
                     });
                 },
 
@@ -6324,7 +6271,7 @@
                         fullName: '',
                         phone: '',
                         age: '',
-                        gender: 'غير محدد',
+                        gender: 'ذكر',
                         bloodType: '',
                         visitType: 'كشف',
                         selectedSymptoms: [],
@@ -6337,7 +6284,7 @@
                     this.patientForm.fullName = patient.fullName;
                     this.patientForm.phone = patient.phone || '';
                     this.patientForm.age = patient.age || '';
-                    this.patientForm.gender = patient.gender || 'غير محدد';
+                    this.patientForm.gender = patient.gender || 'ذكر';
                     this.patientForm.bloodType = patient.bloodType || '';
                     this.patientForm.selectedChronicDiseases = [...(patient.selectedChronicDiseases || [])];
                     this.showPatientSuggestions = false;
@@ -6551,10 +6498,7 @@
                         const newP = {
                             id: Date.now(),
                             ...this.patientForm,
-                            records: [],
-                            // مسودة انتظار: لا تظهر في ملفات المرضى ولا تُعد ملفاً طبياً حتى حفظ الروشتة.
-                            isPendingVisit: true,
-                            createdAt: new Date().toISOString()
+                            records: []
                         };
                         this.patients.unshift(newP);
                         const waitingQueueId = 'WQ-' + Date.now();
@@ -6599,20 +6543,6 @@
                     this.editingPatient = null;
                     this.renderIcons();
                 },
-                startNewVisitFromPatient(patient) {
-                    if (!patient) return;
-                    this.matchedExistingPatient = patient;
-                    this.editingPatient = null;
-                    this.patientForm = {
-                        ...patient,
-                        visitType: '',
-                        selectedSymptoms: [...(patient.selectedSymptoms || [])],
-                        selectedChronicDiseases: [...(patient.selectedChronicDiseases || [])],
-                        gender: patient.gender || 'غير محدد'
-                    };
-                    this.navigateTo('patientForm');
-                    this.$nextTick(() => this.renderIcons());
-                },
                 openMedicalRecordPage(patient) {
                     this.selectedPatientForRecord = patient;
                     if (!this.selectedPatientForRecord.selectedSymptoms) this.selectedPatientForRecord.selectedSymptoms = [];
@@ -6645,7 +6575,7 @@
                         fullName: this.selectedPatientForRecord.fullName,
                         phone: this.selectedPatientForRecord.phone || '',
                         age: this.selectedPatientForRecord.age || '',
-                        gender: this.selectedPatientForRecord.gender || 'غير محدد',
+                        gender: this.selectedPatientForRecord.gender || 'ذكر',
                         bloodType: this.selectedPatientForRecord.bloodType || ''
                     };
                     this.showInlineEditBasicInfoModal = true;
@@ -6743,7 +6673,6 @@
                             patientId: this.selectedPatientForRecord.id,
                             patientName: this.selectedPatientForRecord.fullName,
                             date: new Date().toISOString().split('T')[0],
-                            createdAt: new Date().toISOString(),
                             visitType: this.selectedPatientForRecord.visitType || 'كشف',
                             symptom: symptomTextSummary,
                             symptoms: symptomList,
@@ -6758,8 +6687,6 @@
                         };
 
                         this.selectedPatientForRecord.records.unshift(recordEntry);
-                        // اعتماد المسودة في ملفات المرضى لا يحدث إلا بعد حفظ الروشتة/الزيارة بنجاح.
-                        this.selectedPatientForRecord.isPendingVisit = false;
 
                         // A prescription/visit summary is always created once a diagnosis is saved —
                         // even with no medicines — so the visit is never "lost" and can still be viewed,
@@ -6777,8 +6704,7 @@
                             radiology: finalRadiology,
                             medicinesWithDosage: [...this.newRecordForm.selectedMedicinesWithDosage],
                             nextFollowUpDate: this.newRecordForm.nextFollowUpDate || '',
-                            date: new Date().toISOString().split('T')[0],
-                            createdAt: new Date().toISOString()
+                            date: new Date().toISOString().split('T')[0]
                         };
                         this.prescriptions.unshift(rx);
 
@@ -8524,7 +8450,6 @@
                                             <th class="p-4">اسم المريض</th>
                                             <th class="p-4">الهاتف</th>
                                             <th class="p-4">نوع الزيارة</th>
-                                            <th class="p-4">آخر زيارة</th>
                                             <th class="p-4">الأعراض</th>
                                             <th class="p-4">السجل الطبي</th>
                                             <th class="p-4">حذف</th>
@@ -8539,12 +8464,6 @@
                                                     <div class="flex items-center gap-1.5">
                                                         <span class="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 px-2.5 py-1 rounded text-xs font-bold" x-text="p.visitType || 'كشف'"></span>
                                                         <span class="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap" :title="'عدد الزيارات المسجلة'" x-text="'🔁 ' + getPatientVisitCount(p) + ' زيارة'"></span>
-                                                    </div>
-                                                </td>
-                                                <td data-label="آخر زيارة" class="p-4 text-xs text-slate-600 dark:text-slate-300">
-                                                    <div class="flex flex-col leading-5">
-                                                        <span class="font-semibold" x-text="formatActivityDate(getPatientLatestActivity(p))"></span>
-                                                        <span class="text-[11px] text-slate-400" x-text="formatActivityTime(getPatientLatestActivity(p))"></span>
                                                     </div>
                                                 </td>
                                                 <td class="p-4">
@@ -8620,7 +8539,7 @@
                                     <div>
                                         <label class="block text-xs font-semibold mb-1">الجنس</label>
                                         <select x-model="patientForm.gender" class="w-full px-3 py-2 border rounded-xl text-sm bg-slate-50 dark:bg-slate-800 dark:text-white">
-                                            <option value="غير محدد">غير محدد</option><option value="ذكر">ذكر</option>
+                                            <option value="ذكر">ذكر</option>
                                             <option value="أنثى">أنثى</option>
                                         </select>
                                     </div>
@@ -8699,37 +8618,28 @@
                             <div class="flex justify-between items-center border-b dark:border-slate-800 pb-4">
                                 <div>
                                     <h3 class="text-2xl font-bold text-slate-800 dark:text-white" x-text="'الملف الطبي الكامل: ' + (selectedPatientForRecord?.fullName || '')"></h3>
-                                </div>
-                                <div class="flex items-center gap-2 flex-wrap justify-end">
-                                    <button type="button" @click="startNewVisitFromPatient(selectedPatientForRecord)" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm">
-                                        <i data-lucide="stethoscope" class="w-4 h-4"></i><span>إضافة كشف جديد</span>
-                                    </button>
-                                    <button type="button" @click="navigateTo('patientsList')" class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-xl font-semibold">العودة لقائمة المرضى</button>
-                                </div>
-                            </div>
 
-                            <!-- Read-only patient information: prescriptions and visits are created from the dedicated new-consultation page. -->
-                            <section class="bg-slate-50 dark:bg-slate-800/60 border-2 border-blue-100 dark:border-slate-700 rounded-3xl p-5 lg:p-7 space-y-5">
-                                <div class="flex items-center justify-between gap-3 flex-wrap">
-                                    <div>
-                                        <h4 class="text-lg font-bold text-slate-800 dark:text-white">بيانات المريض</h4>
-                                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">هذه الصفحة مخصصة لبيانات المريض وتفاصيل زياراته السابقة.</p>
+                                    <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                                        <p><span class="font-bold">رقم الهاتف:</span> <span class="font-mono text-blue-600 dark:text-blue-400 font-bold" x-text="selectedPatientForRecord?.phone ? selectedPatientForRecord.phone : 'غير مسجل'"></span></p>
+                                        <p><span class="font-bold">السن:</span> <span x-text="selectedPatientForRecord?.age ? (selectedPatientForRecord.age + ' سنة') : 'غير مسجل'"></span></p>
+                                        <p><span class="font-bold">نوع الزيارة:</span> <span class="font-bold text-amber-600" x-text="selectedPatientForRecord?.visitType || 'كشف'"></span></p>
+                                        <p><span class="font-bold">عدد الزيارات:</span> <span class="font-bold text-indigo-600" x-text="getPatientVisitCount(selectedPatientForRecord) + ' زيارة'"></span></p>
+                                        <span :class="cloudConnectionState() === 'online' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : (cloudConnectionState() === 'syncing' || cloudConnectionState() === 'connecting') ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-500 border-slate-200'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold" title="حالة المزامنة السحابية">
+                                            <span :class="cloudConnectionState() === 'online' ? 'bg-emerald-500' : (cloudConnectionState() === 'syncing' || cloudConnectionState() === 'connecting') ? 'bg-blue-500' : 'bg-slate-400'" class="w-2 h-2 rounded-full"></span>
+                                            <span x-text="cloudConnectionLabel()" :title="syncSafetyHold ? (syncSafetyHoldReason || 'الحجز يمنع الكتابة حتى اكتمال قراءة V2.') : 'حالة المزامنة السحابية'"></span>
+                                        </span>
+                                        <template x-if="authError">
+                                            <span class="basis-full text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2" x-text="authError"></span>
+                                        </template>
+
+                                        <button @click="openInlineEditBasicInfoModal" class="bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 px-3 py-1 rounded-lg text-[11px] font-bold hover:bg-blue-100 flex items-center space-x-1 space-x-reverse border border-blue-200 dark:border-blue-800">
+                                            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                            <span>تعديل البيانات الأساسية</span>
+                                        </button>
                                     </div>
-                                    <button type="button" @click="openInlineEditBasicInfoModal" class="bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-2 rounded-xl text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/60 flex items-center gap-1.5 border border-blue-200 dark:border-blue-800"><i data-lucide="edit-3" class="w-4 h-4"></i><span>تعديل البيانات الأساسية</span></button>
                                 </div>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">الاسم الكامل</p><p class="text-lg font-bold text-blue-700 dark:text-blue-300" x-text="selectedPatientForRecord?.fullName || '-'"></p></div>
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">السن</p><p class="font-bold" x-text="selectedPatientForRecord?.age ? selectedPatientForRecord.age + ' سنة' : 'غير محدد'"></p></div>
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">رقم الهاتف</p><p class="font-mono font-bold" x-text="selectedPatientForRecord?.phone || 'غير مسجل'"></p></div>
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">الجنس</p><p class="font-bold" x-text="selectedPatientForRecord?.gender || 'غير محدد'"></p></div>
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">نوع الزيارة</p><p class="font-bold text-amber-600 dark:text-amber-300" x-text="selectedPatientForRecord?.visitType || 'كشف'"></p></div>
-                                    <div class="bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-700 p-4"><p class="text-xs text-slate-400 mb-1">عدد الزيارات</p><p class="font-bold text-indigo-600 dark:text-indigo-300" x-text="getPatientVisitCount(selectedPatientForRecord) + ' زيارة'"></p></div>
-                                </div>
-                                <div class="bg-white dark:bg-slate-900 rounded-2xl border border-red-100 dark:border-red-900/50 p-4">
-                                    <p class="text-xs font-bold text-red-700 dark:text-red-300 mb-2">الأمراض المزمنة</p>
-                                    <div class="flex flex-wrap gap-2"><template x-for="c in (selectedPatientForRecord?.selectedChronicDiseases || [])" :key="c"><span class="px-2.5 py-1 rounded-lg bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 text-xs font-semibold" x-text="c"></span></template><span x-show="!(selectedPatientForRecord?.selectedChronicDiseases || []).length" class="text-xs text-slate-400">لا توجد أمراض مزمنة مسجلة</span></div>
-                                </div>
-                            </section>
+                                <button @click="navigateTo('patientsList')" class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-xl font-semibold">العودة لقائمة المرضى</button>
+                            </div>
 
                             <!-- Previous Visit Summary (shown prominently at the top for quick reference) -->
                             <div x-show="selectedPatientForRecord?.records && selectedPatientForRecord.records.length > 0" x-cloak class="bg-indigo-50 dark:bg-indigo-900/20 border-2 border-indigo-200 dark:border-indigo-800 p-5 rounded-2xl space-y-3">
@@ -8800,6 +8710,258 @@
                                             <span class="bg-red-200 dark:bg-red-800 text-red-900 dark:text-red-100 px-2.5 py-1 rounded text-xs font-medium" x-text="c"></span>
                                         </template>
                                     </div>
+                                </div>
+                            </div>
+
+                            <!-- Visit Recording Form with Next Follow Up Date -->
+                            <div data-soli-non-auth class="bg-slate-50 dark:bg-slate-800/60 p-6 rounded-2xl border dark:border-slate-700 space-y-5">
+                                <h4 class="font-bold text-base flex items-center space-x-2 space-x-reverse">
+                                    <i data-lucide="stethoscope" class="w-5 h-5 text-blue-600"></i>
+                                    <span>تسجيل تشخيص وزيارة وكتابة روشتة جديدة</span>
+                                </h4>
+
+                                <div class="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/25 p-4 space-y-2">
+                                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5"><label for="recurring-prescription-list" class="text-xs font-bold text-indigo-900 dark:text-indigo-200">القوائم المتكررة من الروشتة</label><span class="text-[10px] text-indigo-700 dark:text-indigo-300" x-text="recurringPrescriptionLists.length ? recurringPrescriptionLists.length + ' قوائم محفوظة' : 'احفظ الروشتة الحالية لتظهر هنا'"></span></div>
+                                    <select id="recurring-prescription-list" x-model="selectedRecurringPrescriptionListId" @change="applyRecurringPrescriptionList($event.target.value)" :disabled="!recurringPrescriptionLists.length" class="w-full px-3 py-2.5 border rounded-xl text-xs bg-white dark:bg-slate-900 border-indigo-200 dark:border-indigo-800 text-slate-800 dark:text-white disabled:cursor-not-allowed disabled:opacity-60"><option value="">اختر قائمة محفوظة لتحميل التشخيص والملاحظات والأدوية...</option><template x-for="savedList in recurringPrescriptionLists" :key="savedList.id"><option :value="savedList.id" x-text="savedList.name + ' — ' + savedList.diagnoses.length + ' تشخيص / ' + savedList.medicines.length + ' دواء'"></option></template></select>
+                                    <p class="text-[10px] text-indigo-800/80 dark:text-indigo-200/80">عند الاختيار، تُستبدل حقول التشخيص والملاحظات والأدوية الحالية بمحتوى القائمة المحفوظة.</p>
+                                </div>
+
+                                <!-- Vital Signs (العلامات الحيوية) -->
+                                <div x-show="recordFormSections.vitals" x-cloak class="space-y-3 border-t dark:border-slate-700 pt-4">
+                                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">العلامات الحيوية (اختياري):</label>
+                                    <input type="search" name="vital-signs-search" role="searchbox" inputmode="search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" x-model="vitalSearchQuery" placeholder="بحث في العلامات الحيوية..." class="soli-search-input w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                    <div class="max-h-44 overflow-y-auto border rounded-xl p-3 bg-white dark:bg-slate-900 space-y-1.5 text-xs">
+                                        <template x-for="v in filteredVitalsMaster" :key="v">
+                                            <div class="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded">
+                                                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer flex-1 min-w-0">
+                                                    <input type="checkbox" :checked="newRecordForm.selectedVitals.some(i => i.name === v)" @change="toggleVitalSelection(v)" class="rounded text-blue-600 w-4 h-4 flex-shrink-0">
+                                                    <span class="text-slate-800 dark:text-slate-200 font-semibold truncate" x-text="v"></span>
+                                                </label>
+                                                <!-- Result box appears right beside the item the moment it's checked -->
+                                                <input x-show="newRecordForm.selectedVitals.some(i => i.name === v)" x-cloak type="text"
+                                                       :value="newRecordForm.selectedVitals.find(i => i.name === v)?.result"
+                                                       @input="const it = newRecordForm.selectedVitals.find(i => i.name === v); if (it) it.result = $event.target.value"
+                                                       placeholder="مثال: 37.5" class="w-24 flex-shrink-0 px-2 py-1 border rounded-lg text-xs bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 dark:text-white">
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <div class="flex gap-1.5">
+                                        <input type="text" x-model="newRecordForm.customVital" @keydown.enter.prevent="addCustomVitalToRecord" placeholder="علامة غير موجودة بالقائمة؟ اكتبها هنا..." class="flex-1 px-3 py-2.5 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                        <button type="button" @click="addCustomVitalToRecord" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap">إضافة</button>
+                                    </div>
+                                    <!-- Extra custom items typed above that aren't part of the standard list -->
+                                    <div class="space-y-2" x-show="newRecordForm.selectedVitals.some(i => !vitalSignsMasterList.includes(i.name))">
+                                        <template x-for="item in newRecordForm.selectedVitals.filter(i => !vitalSignsMasterList.includes(i.name))" :key="item.name">
+                                            <div class="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg border border-blue-100 dark:border-blue-800">
+                                                <span class="text-xs font-bold text-blue-800 dark:text-blue-300 flex-1" x-text="item.name"></span>
+                                                <input type="text" x-model="item.result" placeholder="القراءة/النتيجة..." class="w-28 px-2 py-1.5 border rounded-lg text-xs bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white">
+                                                <button type="button" @click="toggleVitalSelection(item.name)" class="text-slate-400 hover:text-red-600">
+                                                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Multi-select Diagnoses List + Manual Diagnosis -->
+                                <div class="space-y-3 border-t dark:border-slate-700 pt-4">
+                                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"><label class="block text-xs font-bold text-slate-700 dark:text-slate-300">التشخيص الطبي (يمكن اختيار أكثر من تشخيص + كتابة يدوية):</label></div>
+                                    <div class="relative">
+                                        <input type="search" name="diagnosis-search" role="searchbox" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" x-model="diagnosisSearchQuery" @focus="diagnosisSuggestionsOpen = true" @input="diagnosisSuggestionsOpen = true" @keydown.enter.prevent="diagnosisAutocompleteSuggestions.length && selectDiagnosisSuggestion(diagnosisAutocompleteSuggestions[0])" @keydown.escape="diagnosisSuggestionsOpen = false" placeholder="اكتب التشخيص لتظهر الاقتراحات فوراً..." class="soli-search-input w-full px-3 py-2.5 pr-9 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white" aria-label="بحث وإكمال تلقائي للتشخيصات">
+                                        <i data-lucide="sparkles" class="w-4 h-4 text-blue-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                                        <div x-show="diagnosisSuggestionsOpen && diagnosisAutocompleteSuggestions.length" x-cloak class="absolute z-30 top-full mt-1 inset-x-0 overflow-hidden rounded-xl border border-blue-100 dark:border-blue-800 bg-white dark:bg-slate-900 shadow-xl" role="listbox" aria-label="اقتراحات التشخيص">
+                                            <div class="px-3 py-2 bg-blue-50 dark:bg-blue-950/50 text-[10px] font-bold text-blue-700 dark:text-blue-300">إكمال تلقائي — اختر أو اضغط Enter لاختيار أول اقتراح</div>
+                                            <template x-for="suggestion in diagnosisAutocompleteSuggestions" :key="suggestion">
+                                                <button type="button" @mousedown.prevent="selectDiagnosisSuggestion(suggestion)" class="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-right text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors" role="option">
+                                                    <span x-text="suggestion"></span><i data-lucide="plus-circle" class="w-4 h-4 shrink-0 text-blue-500"></i>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div x-show="newRecordForm.selectedDiagnosesList.length" x-cloak class="flex flex-wrap gap-1.5" aria-label="التشخيصات المختارة">
+                                        <template x-for="diagnosis in newRecordForm.selectedDiagnosesList" :key="diagnosis">
+                                            <button type="button" @click="toggleDiagnosisRecordSelection(diagnosis)" class="inline-flex items-center gap-1 rounded-lg bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 text-[11px] font-bold text-blue-800 dark:text-blue-200 hover:bg-red-100 dark:hover:bg-red-900/40" :title="'إزالة ' + diagnosis"><span x-text="diagnosis"></span><i data-lucide="x" class="w-3 h-3"></i></button>
+                                        </template>
+                                    </div>
+
+                                    <div class="max-h-36 overflow-y-auto border rounded-xl p-3 bg-white dark:bg-slate-900 space-y-1.5 text-xs">
+                                        <template x-for="d in filteredDiagnosesMaster" :key="d">
+                                            <label class="flex items-center space-x-2 space-x-reverse cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded">
+                                                <input type="checkbox" :checked="newRecordForm.selectedDiagnosesList.includes(d)" @change="toggleDiagnosisRecordSelection(d)" class="rounded text-blue-600 w-4 h-4">
+                                                <span class="text-slate-800 dark:text-slate-200 font-semibold" x-text="d"></span>
+                                            </label>
+                                        </template>
+                                    </div>
+
+                                    <div>
+                                        <input type="text" x-model="newRecordForm.customDiagnosis" placeholder="أو اكتب تشخيصاً إضافياً يدوياً ليظهر في الروشتة..." class="w-full px-3 py-2.5 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                    </div>
+                                </div>
+
+                                <!-- Lab content: request, result, or report -->
+                                <div x-show="recordFormSections.labTests" x-cloak class="space-y-3 border-t dark:border-slate-700 pt-4">
+                                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">المعمل (اختياري):</label>
+                                    <p class="text-[11px] text-slate-500 dark:text-slate-400">حدد نوع كل عنصر: طلب فحص، نتيجة مكتوبة، أو تقرير.</p>
+                                    <input type="search" name="lab-tests-search" role="searchbox" inputmode="search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" x-model="labTestSearchQuery" placeholder="بحث في أنواع التحاليل المعتمدة..." class="soli-search-input w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                    <div class="max-h-44 overflow-y-auto border rounded-xl p-3 bg-white dark:bg-slate-900 space-y-1.5 text-xs">
+                                        <template x-for="t in filteredLabTestsMaster" :key="t">
+                                            <div class="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded">
+                                                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer flex-1 min-w-0">
+                                                    <input type="checkbox" :checked="newRecordForm.selectedLabTests.some(i => i.name === t)" @change="toggleLabTestSelection(t)" class="rounded text-teal-600 w-4 h-4 flex-shrink-0">
+                                                    <span class="text-slate-800 dark:text-slate-200 font-semibold truncate" x-text="t"></span>
+                                                </label>
+                                                <!-- Result box appears right beside the item the moment it's checked -->
+                                                    <select x-show="newRecordForm.selectedLabTests.some(i => i.name === t)" x-cloak
+                                                            :value="newRecordForm.selectedLabTests.find(i => i.name === t)?.type || 'request'"
+                                                            @change="const it = newRecordForm.selectedLabTests.find(i => i.name === t); if (it) it.type = $event.target.value"
+                                                            class="w-20 flex-shrink-0 px-1.5 py-1 border rounded-lg text-[10px] bg-teal-50 dark:bg-teal-900/30 border-teal-200 dark:border-teal-700 dark:text-white">
+                                                        <option value="request">طلب</option><option value="result">نتيجة</option><option value="report">تقرير</option>
+                                                    </select>
+                                                    <input x-show="newRecordForm.selectedLabTests.some(i => i.name === t)" x-cloak type="text"
+                                                       :value="newRecordForm.selectedLabTests.find(i => i.name === t)?.result"
+                                                       @input="const it = newRecordForm.selectedLabTests.find(i => i.name === t); if (it) it.result = $event.target.value"
+                                                       placeholder="البيان أو النتيجة..." class="w-28 flex-shrink-0 px-2 py-1 border rounded-lg text-xs bg-teal-50 dark:bg-teal-900/30 border-teal-200 dark:border-teal-700 dark:text-white">
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <div class="flex gap-1.5">
+                                        <input type="text" x-model="newRecordForm.customLabTest" @keydown.enter.prevent="addCustomLabTestToRecord" placeholder="نوع تحليل غير موجود بالقائمة؟ اكتبه هنا..." class="flex-1 px-3 py-2.5 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                        <button type="button" @click="addCustomLabTestToRecord" class="bg-teal-600 text-white px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap">إضافة</button>
+                                    </div>
+                                    <!-- Extra custom items typed above that aren't part of the standard list -->
+                                    <div class="space-y-2" x-show="newRecordForm.selectedLabTests.some(i => !labTestsMasterList.includes(i.name))">
+                                        <template x-for="item in newRecordForm.selectedLabTests.filter(i => !labTestsMasterList.includes(i.name))" :key="item.name">
+                                            <div class="flex items-center gap-2 bg-teal-50 dark:bg-teal-900/20 p-2 rounded-lg border border-teal-100 dark:border-teal-800">
+                                                <span class="text-xs font-bold text-teal-800 dark:text-teal-300 flex-1" x-text="item.name"></span>
+                                                <select x-model="item.type" class="w-20 px-1.5 py-1.5 border rounded-lg text-[10px] bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white"><option value="request">طلب</option><option value="result">نتيجة</option><option value="report">تقرير</option></select>
+                                                <input type="text" x-model="item.result" placeholder="البيان أو النتيجة..." class="w-28 px-2 py-1.5 border rounded-lg text-xs bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white">
+                                                <button type="button" @click="toggleLabTestSelection(item.name)" class="text-slate-400 hover:text-red-600">
+                                                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Radiology content: request, result, or report -->
+                                <div x-show="recordFormSections.radiology" x-cloak class="space-y-3 border-t dark:border-slate-700 pt-4">
+                                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">الأشعة (اختياري):</label>
+                                    <p class="text-[11px] text-slate-500 dark:text-slate-400">حدد نوع كل عنصر: طلب فحص، نتيجة مكتوبة، أو تقرير.</p>
+                                    <input type="search" name="radiology-search" role="searchbox" inputmode="search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" x-model="radiologySearchQuery" placeholder="بحث في أنواع الأشعة المعتمدة..." class="soli-search-input w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                    <div class="max-h-44 overflow-y-auto border rounded-xl p-3 bg-white dark:bg-slate-900 space-y-1.5 text-xs">
+                                        <template x-for="r in filteredRadiologyMaster" :key="r">
+                                            <div class="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded">
+                                                <label class="flex items-center space-x-2 space-x-reverse cursor-pointer flex-1 min-w-0">
+                                                    <input type="checkbox" :checked="newRecordForm.selectedRadiology.some(i => i.name === r)" @change="toggleRadiologySelection(r)" class="rounded text-purple-600 w-4 h-4 flex-shrink-0">
+                                                    <span class="text-slate-800 dark:text-slate-200 font-semibold truncate" x-text="r"></span>
+                                                </label>
+                                                <!-- Result box appears right beside the item the moment it's checked -->
+                                                    <select x-show="newRecordForm.selectedRadiology.some(i => i.name === r)" x-cloak
+                                                            :value="newRecordForm.selectedRadiology.find(i => i.name === r)?.type || 'request'"
+                                                            @change="const it = newRecordForm.selectedRadiology.find(i => i.name === r); if (it) it.type = $event.target.value"
+                                                            class="w-20 flex-shrink-0 px-1.5 py-1 border rounded-lg text-[10px] bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 dark:text-white">
+                                                        <option value="request">طلب</option><option value="result">نتيجة</option><option value="report">تقرير</option>
+                                                    </select>
+                                                    <input x-show="newRecordForm.selectedRadiology.some(i => i.name === r)" x-cloak type="text"
+                                                       :value="newRecordForm.selectedRadiology.find(i => i.name === r)?.result"
+                                                       @input="const it = newRecordForm.selectedRadiology.find(i => i.name === r); if (it) it.result = $event.target.value"
+                                                       placeholder="البيان أو النتيجة..." class="w-28 flex-shrink-0 px-2 py-1 border rounded-lg text-xs bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 dark:text-white">
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <div class="flex gap-1.5">
+                                        <input type="text" x-model="newRecordForm.customRadiology" @keydown.enter.prevent="addCustomRadiologyToRecord" placeholder="نوع أشعة غير موجود بالقائمة؟ اكتبه هنا..." class="flex-1 px-3 py-2.5 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                        <button type="button" @click="addCustomRadiologyToRecord" class="bg-purple-600 text-white px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap">إضافة</button>
+                                    </div>
+                                    <!-- Extra custom items typed above that aren't part of the standard list -->
+                                    <div class="space-y-2" x-show="newRecordForm.selectedRadiology.some(i => !radiologyMasterList.includes(i.name))">
+                                        <template x-for="item in newRecordForm.selectedRadiology.filter(i => !radiologyMasterList.includes(i.name))" :key="item.name">
+                                            <div class="flex items-center gap-2 bg-purple-50 dark:bg-purple-900/20 p-2 rounded-lg border border-purple-100 dark:border-purple-800">
+                                                <span class="text-xs font-bold text-purple-800 dark:text-purple-300 flex-1" x-text="item.name"></span>
+                                                <select x-model="item.type" class="w-20 px-1.5 py-1.5 border rounded-lg text-[10px] bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white"><option value="request">طلب</option><option value="result">نتيجة</option><option value="report">تقرير</option></select>
+                                                <input type="text" x-model="item.result" placeholder="البيان أو النتيجة..." class="w-28 px-2 py-1.5 border rounded-lg text-xs bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white">
+                                                <button type="button" @click="toggleRadiologySelection(item.name)" class="text-slate-400 hover:text-red-600">
+                                                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Egyptian Medicines Market Database Search & Selection -->
+                                <div class="space-y-3 border-t dark:border-slate-700 pt-4">
+                                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">أصناف الأدوية المصرية (بحث ذكي بالاسم وجرعة مخصصة لكل دواء):</label>
+                                    <div class="relative">
+                                        <input type="search" name="medicine-archive-search" role="searchbox" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-form-type="other" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" x-model="medicineSearchQuery" @focus="medicineSuggestionsOpen = true" @input="medicineSuggestionsOpen = true" @keydown.enter.prevent="medicineAutocompleteSuggestions.length ? selectMedicineSuggestion(medicineAutocompleteSuggestions[0]) : addCustomMedicineToRecord()" @keydown.escape="medicineSuggestionsOpen = false" placeholder="اكتب اسم الدواء أو التركيز لتظهر الاقتراحات فوراً..." class="soli-search-input w-full px-3 py-2.5 pr-9 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white" aria-label="بحث وإكمال تلقائي للأدوية">
+                                        <i data-lucide="search-check" class="w-4 h-4 text-blue-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                                        <div x-show="medicineSuggestionsOpen && medicineAutocompleteSuggestions.length" x-cloak class="absolute z-30 top-full mt-1 inset-x-0 overflow-hidden rounded-xl border border-blue-100 dark:border-blue-800 bg-white dark:bg-slate-900 shadow-xl" role="listbox" aria-label="اقتراحات الدواء">
+                                            <div class="px-3 py-2 bg-blue-50 dark:bg-blue-950/50 text-[10px] font-bold text-blue-700 dark:text-blue-300">إكمال تلقائي — تضيف القائمة المتكررة الجرعة المحفوظة تلقائياً</div>
+                                            <template x-for="suggestion in medicineAutocompleteSuggestions" :key="suggestion.name">
+                                                <button type="button" @mousedown.prevent="selectMedicineSuggestion(suggestion)" class="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-right hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors" role="option">
+                                                    <span class="min-w-0"><span class="block truncate text-xs font-bold text-slate-800 dark:text-slate-100" x-text="suggestion.name"></span><span class="block text-[10px] text-slate-500 dark:text-slate-400" x-text="suggestion.timing ? suggestion.source + ' · ' + suggestion.timing : suggestion.source"></span></span><i data-lucide="plus-circle" class="w-4 h-4 shrink-0 text-blue-500"></i>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <span x-show="isLoadingMedicineArchive" class="text-blue-600 dark:text-blue-300">جارٍ تحميل الأرشيف...</span>
+                                        <span x-show="!isLoadingMedicineArchive && medicineArchiveMessage" x-text="medicineArchiveMessage"></span>
+                                        <span class="text-amber-700 dark:text-amber-300">تحقق من الاسم والتركيز والجرعة من هيئة الدواء المصرية قبل الوصف.</span>
+                                    </div>
+
+                                    <div class="max-h-40 overflow-y-auto border rounded-xl p-3 bg-white dark:bg-slate-900 space-y-2 text-xs">
+                                        <template x-for="med in filteredMedicinesMaster" :key="med">
+                                            <label class="flex items-center space-x-2 space-x-reverse cursor-pointer p-2 rounded hover:bg-slate-100 dark:hover:bg-slate-800">
+                                                <input type="checkbox" :checked="newRecordForm.selectedMedicinesWithDosage.some(i => i.name === med)" @change="toggleMedicineRecordSelection(med)" class="rounded text-blue-600 w-4 h-4">
+                                                <span class="font-mono font-bold text-sm" x-text="med"></span>
+                                            </label>
+                                        </template>
+                                    </div>
+
+                                    <div class="flex gap-1.5">
+                                        <input type="text" x-model="customMedicineInput" @keydown.enter.prevent="addCustomMedicineToRecord" placeholder="دواء غير موجود بالقائمة؟ اكتب اسمه هنا..." class="flex-1 px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 dark:text-white">
+                                        <button type="button" @click="addCustomMedicineToRecord" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap">إضافة دواء</button>
+                                    </div>
+
+                                    <!-- Dosage Timing Dropdown & Custom Text per Medicine -->
+                                    <div class="space-y-3 pt-3">
+                                        <span class="text-xs font-bold text-slate-700 dark:text-slate-300 block">تحديد الجرعات والتوقيت لكل دواء موصوف:</span>
+                                        <template x-for="item in newRecordForm.selectedMedicinesWithDosage" :key="item.name">
+                                            <div class="flex flex-col md:flex-row gap-3 items-center bg-blue-50 dark:bg-slate-800 p-3 rounded-xl border border-blue-100 dark:border-slate-700 text-xs">
+                                                <span class="w-full md:w-1/3 font-bold font-mono text-blue-700 dark:text-blue-300" x-text="item.name"></span>
+
+                                                <!-- Dropdown Presets -->
+                                                <select x-model="item.timing" class="w-full md:w-1/3 px-3 py-2 border rounded-lg bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-white">
+                                                    <template x-for="dp in dosageTimingPresets" :key="dp">
+                                                        <option :value="dp" x-text="dp"></option>
+                                                    </template>
+                                                </select>
+
+                                                <!-- Custom Dosage extra text -->
+                                                <input type="text" x-model="item.extraDosageNotes" placeholder="تفاصيل إضافية (مثال: بعد الأكل)" class="w-full md:w-1/3 px-3 py-2 border rounded-lg bg-white dark:bg-slate-900 dark:text-white text-xs">
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+
+                                <!-- Next Follow Up Date Field -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t dark:border-slate-700 pt-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">موعد المتابعة القادمة (تظهر في أسفل الروشتة):</label>
+                                        <input type="date" lang="ar-EG" dir="rtl" x-model="newRecordForm.nextFollowUpDate" class="soli-date-input w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">ملاحظات وتوصيات عامة:</label>
+                                        <textarea x-model="newRecordForm.generalNotes" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-lpignore="true" data-form-type="other" rows="3" placeholder="ملاحظات وتوصيات..." class="w-full px-3 py-2 border rounded-xl text-xs bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white resize-y"></textarea>
+                                        <div x-show="recurringNotesList.length" class="mt-2 flex flex-wrap items-center gap-1.5"><span class="text-[10px] text-slate-400">ملاحظات متكررة:</span><template x-for="note in recurringNotesList" :key="note"><button type="button" @click="newRecordForm.generalNotes = note" class="max-w-full truncate rounded-lg bg-indigo-50 dark:bg-indigo-950/30 px-2 py-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50" x-text="note" :title="note"></button></template></div>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                    <button type="button" @click="saveRecurringItemsFromPrescription()" class="bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 font-bold px-4 py-3 rounded-xl text-xs">حفظ عناصر الروشتة كقائمة متكررة</button>
+                                    <button @click="addMedicalRecord" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow">
+                                        حفظ الزيارة وتوليد الروشتة
+                                    </button>
                                 </div>
                             </div>
 
