@@ -602,6 +602,8 @@
                 appRelease: SOLI_APP_RELEASE,
                 navigationHistory: [],
                 openPrescriptionPatientId: null,
+                prescriptionMode: 'archive',
+                prescriptionDraft: { diagnosis: '', medicines: '', notes: '', nextFollowUpDate: '' },
 
                 // Modals Controls
                 showInvoiceModal: false,
@@ -1242,6 +1244,8 @@
                 cloudCutoverConfigurationChecked: false,
                 cloudCutoverConfigurationError: '',
                 cloudCutoverConfigurationInFlight: false,
+                // لا يُعتمد مخطط V2 من cache محلي قديم؛ يجب أن يأتي اعتماد القطع من Firestore في كل جلسة.
+                serverCutoverApproved: false,
 
                 getOrCreateSyncDeviceId() {
                     const key = 'soliMedicalSyncDeviceId_v1';
@@ -1829,12 +1833,14 @@
                     const syncRef = this.getV2Collection('settings').doc('sync');
                     const snapshot = await syncRef.get({ source: 'server' });
                     this.cloudCutoverConfigurationChecked = true;
+                    this.serverCutoverApproved = false;
                     if (!snapshot.exists) return false;
                     const configuration = snapshot.data() || {};
                     const approvedCutover = configuration.recordLevelEnabled === true &&
                         configuration.legacySnapshotMode === 'recovery_only' &&
                         typeof configuration.migrationId === 'string' && configuration.migrationId.length > 0;
                     if (!approvedCutover) return false;
+                    this.serverCutoverApproved = true;
                     // The server validates the manifest and the source checksum before it writes
                     // this setting. A device that still has an old pending legacy state retains a
                     // private recovery copy, then reads V2 without ever uploading a full snapshot.
@@ -1891,6 +1897,8 @@
                     if (this.cloudCutoverConfigurationChecked && this.isOperationalDocumentSyncActive() &&
                         (this.v2OperationalInitialLoadInFlight || this.v2OperationalUnsubscribers.length)) return;
                     // كل جلسة مصادقة تبدأ بقراءة server authoritative؛ لا نعيد استخدام outbox قديم.
+                    // أي علم V2 محفوظ محلياً ليس دليلاً على اعتماد الخادم لهذا الجهاز.
+                    this.serverCutoverApproved = false;
                     this.beginAuthoritativeRemoteHydration();
                     this.cloudSyncStartInFlight = true;
                     this.loadOperationalSyncConfiguration().then(approvedCutover => {
@@ -2427,7 +2435,7 @@
                     return Boolean(topLevel?.status === 'completed' && topLevel?.migrationId && topLevel?.dualWriteEnabled !== false);
                 },
                 isOperationalDocumentSyncActive(migration = this.dataMigration) {
-                    return this.isTopLevelOperationalSyncActive(migration) || this.isV2OperationalSyncActive(migration);
+                    return Boolean(this.serverCutoverApproved && (this.isTopLevelOperationalSyncActive(migration) || this.isV2OperationalSyncActive(migration)));
                 },
                 getAccessibleVisitDepartments() {
                     if (this.isCurrentUserManager?.()) return null;
@@ -6592,6 +6600,7 @@
                         this.recentRegisteredPatients = [{ id: savedPatient.id, name: savedPatient.fullName, visitType: savedPatient.visitType, createdAt: new Date().toISOString() }, ...(this.recentRegisteredPatients || [])].slice(0, 8);
                     }
                     if (addedWaitingItem && String(addedWaitingItem.patientId ?? '') === String(savedPatient?.id ?? '')) this.announceWaitingArrival(addedWaitingItem, 'visit_registration');
+                    this.markLocalSyncChange();
                     this.persistState();
                     this.queueCloudSync(0);
                     this.showFlashNotice(`تم تسجيل زيارة ${savedPatient?.fullName || ''} وتوليد الفاتورة`);
@@ -6800,6 +6809,7 @@
                             selectedRadiology: [], customRadiology: '',
                             selectedMedicinesWithDosage: [], nextFollowUpDate: '', generalNotes: ''
                         };
+                        this.markLocalSyncChange();
                         this.persistState();
                         this.queueCloudSync(0);
                         this.renderIcons();
@@ -7219,7 +7229,32 @@
                     }
                     this.persistState();
                     this.queueCloudSync(0);
-                    this.openMedicalRecordPage(patient);
+                    this.selectedPatientForRecord = patient;
+                    this.prescriptionDraft = { diagnosis: '', medicines: '', notes: '', nextFollowUpDate: '' };
+                    this.prescriptionMode = 'new';
+                    this.openPrescriptionPatientId = String(patient.id);
+                    this.navigateTo('pharmacy');
+                },
+
+                saveWaitingPrescription() {
+                    const draft = this.prescriptionDraft || {};
+                    const diagnosis = String(draft.diagnosis || '').trim();
+                    if (!this.selectedPatientForRecord || !diagnosis) {
+                        alert('يرجى كتابة التشخيص قبل حفظ الروشتة.');
+                        return;
+                    }
+                    const medicineNames = String(draft.medicines || '').split(/[،,\\n]+/).map(name => name.trim()).filter(Boolean);
+                    this.newRecordForm = {
+                        selectedDiagnosesList: [diagnosis], customDiagnosis: '',
+                        selectedVitals: [], customVital: '', selectedLabTests: [], customLabTest: '',
+                        selectedRadiology: [], customRadiology: '',
+                        selectedMedicinesWithDosage: medicineNames.map(name => ({ name, timing: '', extraDosageNotes: '' })),
+                        nextFollowUpDate: draft.nextFollowUpDate || '', generalNotes: draft.notes || ''
+                    };
+                    this.addMedicalRecord();
+                    this.prescriptionMode = 'archive';
+                    this.openPrescriptionPatientId = null;
+                    this.navigateTo('patientsList');
                 },
 
                 removeFromQueueForPatient(patientId) {
@@ -8210,7 +8245,7 @@
                             <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
                             <span>التقارير الشاملة</span>
                         </a>
-                        <a x-show="currentUser?.permissions?.pharmacy" @click="navigateTo('pharmacy')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'pharmacy'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
+                        <a x-show="currentUser?.permissions?.pharmacy" @click="prescriptionMode = 'archive'; navigateTo('pharmacy')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'pharmacy'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
                             <i data-lucide="file-text" class="w-5 h-5"></i>
                             <span>الوصفات والروشتات الطبية</span>
                         </a>
@@ -8331,7 +8366,7 @@
                                     <p class="text-xs text-violet-700 dark:text-violet-300 font-bold">المتابعة القادمة</p>
                                     <p class="text-sm font-bold text-violet-600 mt-2" x-text="upcomingFollowUps.length + ' موعد'" ></p>
                                 </button>
-                                <button x-show="currentUser?.permissions?.pharmacy" @click="navigateTo('pharmacy')" class="dashboard-action-card text-right bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-100 dark:border-cyan-900/60 p-5 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
+                                <button x-show="currentUser?.permissions?.pharmacy" @click="prescriptionMode = 'archive'; navigateTo('pharmacy')" class="dashboard-action-card text-right bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-100 dark:border-cyan-900/60 p-5 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
                                     <span class="w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center mb-3"><i data-lucide="file-text" class="w-5 h-5"></i></span>
                                     <p class="text-xs text-cyan-700 dark:text-cyan-300 font-bold">الوصفات والروشتات الطبية</p>
                                     <p class="text-sm font-bold text-cyan-600 mt-2" x-text="prescriptions.length + ' وصفة'" ></p>
@@ -9088,8 +9123,25 @@
                             </div>
                         </div>
 
-                        <!-- 7. PHARMACY / PRESCRIPTIONS ARCHIVE VIEW -->
-                        <div x-show="currentView === 'pharmacy'" class="space-y-5 w-full">
+                        <!-- 7. PHARMACY / PRESCRIPTIONS VIEW -->
+                        <div x-show="currentView === 'pharmacy' && prescriptionMode === 'new'" class="space-y-5 w-full max-w-5xl mx-auto">
+                            <div class="flex items-center justify-between gap-3 flex-wrap">
+                                <div><h3 class="font-bold text-slate-800 dark:text-white text-xl">روشتة جديدة</h3><p class="text-sm text-slate-500 dark:text-slate-400 mt-1">اكتب التشخيص والأدوية ثم احفظ الروشتة لاعتماد الزيارة في ملف المريض.</p></div>
+                                <button type="button" @click="prescriptionMode = 'archive'; openPrescriptionPatientId = null" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold">العودة لأرشيف الروشتات</button>
+                            </div>
+                            <section class="bg-white dark:bg-slate-900 rounded-2xl border-2 border-blue-100 dark:border-slate-800 shadow-sm p-5 lg:p-7 space-y-5">
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div class="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 p-4"><p class="text-xs text-slate-500">اسم المريض</p><p class="font-bold text-blue-700 dark:text-blue-300 mt-1" x-text="selectedPatientForRecord?.fullName || '-'" ></p></div>
+                                    <div class="rounded-xl bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 p-4"><p class="text-xs text-slate-500">الهاتف</p><p class="font-mono font-bold mt-1" x-text="selectedPatientForRecord?.phone || 'غير مسجل'" ></p></div>
+                                    <div class="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900 p-4"><p class="text-xs text-slate-500">نوع الزيارة</p><p class="font-bold text-amber-700 dark:text-amber-300 mt-1" x-text="selectedPatientForRecord?.visitType || 'كشف'" ></p></div>
+                                </div>
+                                <div><label class="block text-sm font-bold mb-2">التشخيص <span class="text-red-500">*</span></label><textarea x-model="prescriptionDraft.diagnosis" rows="3" class="w-full px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-800 dark:text-white" placeholder="اكتب التشخيص الطبي..."></textarea></div>
+                                <div><label class="block text-sm font-bold mb-2">الأدوية والجرعات</label><textarea x-model="prescriptionDraft.medicines" rows="5" class="w-full px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-800 dark:text-white" placeholder="اكتب دواءً في كل سطر، ويمكن إضافة الجرعة بجوار اسم الدواء..."></textarea><p class="text-[11px] text-slate-400 mt-1">يمكن ترك الحقل فارغاً إذا كانت الروشتة لا تحتوي على أدوية.</p></div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><label class="block text-sm font-bold mb-2">موعد المتابعة</label><input type="date" x-model="prescriptionDraft.nextFollowUpDate" class="w-full px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-800 dark:text-white"></div><div><label class="block text-sm font-bold mb-2">ملاحظات وتوصيات</label><textarea x-model="prescriptionDraft.notes" rows="2" class="w-full px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-800 dark:text-white" placeholder="ملاحظات للطبيب أو المريض..."></textarea></div></div>
+                                <div class="flex justify-end gap-2 pt-3 border-t dark:border-slate-800"><button type="button" @click="saveWaitingPrescription()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl text-sm font-bold shadow">حفظ الروشتة واعتماد الزيارة</button></div>
+                            </section>
+                        </div>
+                        <div x-show="currentView === 'pharmacy' && prescriptionMode !== 'new'" class="space-y-5 w-full">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                 <div>
                                     <h3 class="font-bold text-slate-800 dark:text-white text-lg">أرشيف الوصفات والروشتات الطبية</h3>
