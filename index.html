@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="عيادة 2">
-    <link rel="manifest" href="./manifest.webmanifest?v=v2.5.15-clinic2">
+    <link rel="manifest" href="./manifest.webmanifest?v=v2.5.17-sync-bootstrap">
     <link rel="icon" href="./icons/icon.png" type="image/png">
     <link rel="apple-touch-icon" href="./icons/icon.png">
     <!-- Tailwind CSS with Dark Mode Support -->
@@ -76,7 +76,7 @@
         const isPublicPricingUrl = () => false;
         const publicBookingMode = false;
         const publicPricingMode = false;
-        const SOLI_APP_VERSION = 'v2.5.15-clinic2';
+        const SOLI_APP_VERSION = 'v2.5.17-sync-bootstrap';
         const SOLI_APP_RELEASE = 'فصل تشخيص حجز الأمان عن إعادة القراءة؛ تعرض الشارة التشخيص الآمن وتبقى إعادة القراءة زرًا مستقلاً بلا رفع أو حذف عند فشل قراءة سريرية.';
 
         const firebaseEmailForUsername = async (value) => {
@@ -10452,7 +10452,7 @@
     <script>
         if ('serviceWorker' in navigator && !publicBookingMode) {
             window.addEventListener('load', () => {
-                    navigator.serviceWorker.register('./sw.js?v=soli-v2.5.15-clinic2-pwa', { updateViaCache: 'none' })
+                    navigator.serviceWorker.register('./sw.js?v=soli-v2.5.17-sync-bootstrap-pwa', { updateViaCache: 'none' })
                     .then(registration => registration.update())
                     .catch(error => console.warn('Soli Medical Service Worker:', error));
             });
