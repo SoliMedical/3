@@ -2916,10 +2916,24 @@
                             return cache;
                         }, {});
                         this.applyPendingSyncOperationsToCache();
-                        this.v2OperationalReady = true;
-                        const applied = this.applyV2RemoteState('التحميل الأول الخادمي من مخطط V2');
-                        this.cloudServerHydrated = Boolean(applied);
-                        if (!applied) this.cloudStatus = 'connecting';
+                            this.v2OperationalReady = true;
+                            const applied = this.applyV2RemoteState('التحميل الأول الخادمي من مخطط V2');
+                            this.cloudServerHydrated = Boolean(applied);
+                            if (applied) {
+                                // اكتملت قراءة كل المجموعات المطلوبة من الخادم؛ لا تترك الشارة عالقة على connecting.
+                                this.cloudStatus = navigator.onLine ? 'online' : 'offline';
+                            } else {
+                                this.cloudStatus = 'connecting';
+                                setTimeout(() => {
+                                    if (this.v2OperationalReady && !this.cloudServerHydrated && !this.hasPendingSyncWork() && !this.v2RemoteHydrationInFlight) {
+                                        const retried = this.applyV2RemoteState('إقرار V2 المؤجل');
+                                        if (retried) {
+                                            this.cloudServerHydrated = true;
+                                            this.cloudStatus = navigator.onLine ? 'online' : 'offline';
+                                        }
+                                    }
+                                }, 0);
+                            }
                         if (failedCollections.length) {
                             console.warn(`تعذر التحميل الأول لبعض مجموعات Firestore الاختيارية: ${failedCollections.join('، ')}.`);
                         }
@@ -4282,6 +4296,7 @@
                         cloudAuthReady: Boolean(this.cloudAuthReady),
                         cloudMembershipReady: Boolean(this.cloudMembershipReady),
                         cloudStatus: this.cloudStatus || '(غير معروف)',
+                        cloudServerHydrated: Boolean(this.cloudServerHydrated),
                         online: Boolean(navigator.onLine),
                         v2Ready: Boolean(this.v2OperationalReady),
                         v2RequiredCollections: (this.v2OperationalRequiredCollections || []).join(', ') || '(غير محسوبة)',
@@ -4540,6 +4555,9 @@
                             this.saveSession(firebaseUser.id);
                             this.landOnAllowedPage(firebaseUser);
                             this.renderIcons();
+                            // تسجيل الدخول الناجح كان يضع الحالة online دون تشغيل قارئ V2.
+                            // ابدأ المزامنة هنا فور اكتمال الهوية والعضوية حتى تُقرأ البيانات من الخادم.
+                            this.startCloudSync();
                             return;
                         } catch (error) {
                             await firebaseAuth.signOut().catch(() => {});
