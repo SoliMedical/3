@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="عيادة 2">
-    <link rel="manifest" href="./manifest.webmanifest?v=v2.5.18-Soli3">
+    <link rel="manifest" href="./manifest.webmanifest?v=v2.5.19-Soli3">
     <link rel="icon" href="./icons/icon.png" type="image/png">
     <link rel="apple-touch-icon" href="./icons/icon.png">
     <!-- Tailwind CSS with Dark Mode Support -->
@@ -76,7 +76,7 @@
         const isPublicPricingUrl = () => false;
         const publicBookingMode = false;
         const publicPricingMode = false;
-        const SOLI_APP_VERSION = 'v2.5.18 Soli3';
+        const SOLI_APP_VERSION = 'v2.5.19 Soli3';
         const SOLI_APP_RELEASE = 'فصل تشخيص حجز الأمان عن إعادة القراءة؛ تعرض الشارة التشخيص الآمن وتبقى إعادة القراءة زرًا مستقلاً بلا رفع أو حذف عند فشل قراءة سريرية.';
 
         const firebaseEmailForUsername = async (value) => {
@@ -108,9 +108,9 @@
         const SOLI_ENGLISH_INTERFACE = Object.freeze({
             'Soli Medical - نظام إدارة عيادة الطبيب الواحد': 'Soli Medical — Single-Physician Clinic Management',
             'لوحة التحكم الرئيسية': 'Dashboard', 'إضافة زيارة / كشف': 'New Consultation', 'المواعيد والتقويم': 'Appointments & Calendar',
-            'مرضى في الانتظار': 'Waiting Patients', 'المتابعة القادمة': 'Upcoming Follow-ups', 'إدارة المرضى والملفات': 'Patients & Records',
+            'مرضى في الانتظار': 'Waiting Patients', 'المتابعة القادمة': 'Upcoming Follow-ups', 'اضافة روشتة جديده': 'Patients & Records',
             'الفواتير والمالية': 'Billing & Finance', 'المنصرف': 'Expenses', 'التقارير الشاملة': 'Clinical Reports',
-            'الوصفات والروشتات الطبية': 'Prescription Archive', 'الروشتة': 'Prescription', 'إعدادات القوائم والأدلة': 'System Settings',
+            'ملفات المرضى': 'Prescription Archive', 'الروشتة': 'Prescription', 'إعدادات القوائم والأدلة': 'System Settings',
             'إدارة المواعيد والتقويم': 'Appointments & Calendar', 'نظّم المواعيد وحوّل الموعد إلى قائمة الانتظار عند حضور المريض.': 'Organize appointments and move patients to the waiting list when they arrive.',
             'إضافة موعد': 'Add Appointment', 'إضافة من طلب واتساب': 'Add from WhatsApp request', 'اسم المريض': 'Patient name',
             'كشف': 'Consultation', 'متابعة': 'Follow-up', 'استشارة': 'Consultation', 'ملاحظات الموعد': 'Appointment notes',
@@ -129,7 +129,7 @@
             'حذف بيانات العيادة من المتصفح والسحابة': 'Delete clinic data from browser and cloud', 'إضافة زيارة جديدة': 'Add New Visit',
             'تسجيل زيارة / مريض جديد': 'Register Visit / New Patient', 'السجل الطبي الموسع للمريض': 'Patient Medical Record',
             'المتابعة القادمة وتذكيرات المرضى': 'Upcoming Follow-ups & Patient Reminders', 'السجلات المالية والفواتير والتحصيل': 'Financial Records, Invoices & Billing',
-            'أرشيف الوصفات والروشتات الطبية': 'Prescription Archive', 'إعدادات الروشتة والطباعة': 'Prescription & Print Settings',
+            'أرشيف ملفات المرضى': 'Prescription Archive', 'إعدادات الروشتة والطباعة': 'Prescription & Print Settings',
             'إعدادات النظام والأسعار والقوائم': 'System Settings, Fees & Lists', 'متصل': 'Connected', 'جارٍ المزامنة': 'Synchronizing',
             'وضع محلي - بانتظار الاتصال': 'Local mode — waiting for connection', 'مريض': 'Patient', 'مرضى': 'Patients', 'زيارة': 'Visit', 'زيارات': 'Visits',
             'فاتورة': 'Invoice', 'فواتير': 'Invoices', 'روشتة': 'Prescription', 'الوصفات': 'Prescriptions', 'الأعراض': 'Symptoms',
@@ -4972,19 +4972,20 @@
                     };
                 },
                 localPermissionsFromAdmin(remote = {}) {
+                    const read = (...keys) => keys.some(key => remote?.[key] === true);
                     return {
-                        dashboard: remote.dashboard === true,
-                        newVisit: remote.clinicVisits === true,
-                        appointments: remote.appointments === true,
-                        waitingQueue: remote.waitingQueue === true,
-                        followUps: remote.followUps === true,
-                        patients: remote.patients === true,
-                        invoices: remote.income === true,
-                        expenses: remote.expenses === true,
-                        reports: remote.reports === true,
-                        pharmacy: remote.pharmacy === true,
-                        prescriptionSettings: remote.prescriptionSettings === true,
-                        settings: remote.settings === true,
+                        dashboard: read('dashboard'),
+                        newVisit: read('clinicVisits', 'newVisit'),
+                        appointments: read('appointments'),
+                        waitingQueue: read('waitingQueue'),
+                        followUps: read('followUps'),
+                        patients: read('patients'),
+                        invoices: read('income', 'invoices'),
+                        expenses: read('expenses'),
+                        reports: read('reports'),
+                        pharmacy: read('pharmacy'),
+                        prescriptionSettings: read('prescriptionSettings'),
+                        settings: read('settings'),
                     };
                 },
                 uiRoleForFirebase(role) {
@@ -5017,10 +5018,10 @@
                 },
                 normalizeManagedFirebaseUser(profile) {
                     return this.withCompatiblePermissions({
-                        id: String(profile.uid), firebaseUid: String(profile.uid),
-                        fullName: String(profile.displayName || profile.username || 'مستخدم النظام'),
-                        email: String(profile.username || ''), role: this.uiRoleForFirebase(profile.globalRole),
-                        active: profile.status === 'active',
+                        id: String(profile.uid || profile.id || profile.username || profile.email), firebaseUid: String(profile.uid || profile.firebaseUid || ''),
+                        fullName: String(profile.displayName || profile.fullName || profile.name || profile.username || profile.email || 'مستخدم النظام'),
+                        email: String(profile.username || profile.email || profile.firebaseEmail || ''), role: this.uiRoleForFirebase(profile.globalRole || profile.role || profile.clinicRole),
+                        active: profile.status ? profile.status === 'active' : profile.active !== false,
                         permissions: this.localPermissionsFromAdmin(profile.permissions || {}),
                         firebaseAuthStatus: 'active',
                     });
@@ -5311,10 +5312,13 @@
                         this.navigationHistory.push(previousView);
                         this.navigationHistory = this.navigationHistory.slice(-20);
                     }
-                    this.currentView = view;
-                    if (view === 'settings') {
-                        this.$nextTick(() => document.querySelectorAll('.settings-accordion[open]').forEach(card => card.removeAttribute('open')));
-                    }
+                        this.currentView = view;
+                        if (view === 'settings') {
+                            this.$nextTick(() => document.querySelectorAll('.settings-accordion[open]').forEach(card => card.removeAttribute('open')));
+                            if (isFirebaseConfigured && clinicAccountGatewayUrl && ['admin', 'owner'].includes(String(this.currentUser?.role || '').toLowerCase())) {
+                                this.loadManagedFirebaseUsers().catch(error => console.warn('تعذر تحديث قائمة مستخدمي Firebase:', error));
+                            }
+                        }
                     this.mobileMenuOpen = false;
                     localStorage.setItem('soliLastSection', view);
                     if (options.scroll !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -5336,12 +5340,12 @@
                         followUps: 'المتابعة القادمة وتذكيرات المرضى',
                         waitingQueue: 'مرضى في الانتظار',
                         appointments: 'إدارة المواعيد والتقويم',
-                        patientsList: 'سجل إدارات المرضى والملفات الطبية',
+                        patientsList: 'اضافة روشتة جديده',
                         patientForm: 'تسجيل زيارة / مريض جديد',
                         medicalRecord: 'السجل الطبي الموسع للمريض',
                         clinics: 'عيادات الطبيب وتفاصيل التواصل',
                         invoices: 'السجلات المالية والفواتير والتحصيل',
-                        pharmacy: 'أرشيف الوصفات والروشتات الطبية',
+                        pharmacy: 'ملفات المرضى',
                         prescriptionSettings: 'إعدادات الروشتة والطباعة',
                         settings: 'إعدادات النظام والأسعار والقوائم'
                     };
@@ -8152,7 +8156,7 @@
                         </a>
                         <a x-show="currentUser?.permissions?.patients" @click="navigateTo('patientsList')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'patientsList' || currentView === 'medicalRecord'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
                             <i data-lucide="users" class="w-5 h-5"></i>
-                            <span>إدارة المرضى والملفات</span>
+                            <span>اضافة روشتة جديده</span>
                         </a>
                         <a x-show="currentUser?.permissions?.invoices" @click="navigateTo('invoices')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'invoices'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
                             <i data-lucide="receipt" class="w-5 h-5"></i>
@@ -8168,7 +8172,7 @@
                         </a>
                         <a x-show="currentUser?.permissions?.pharmacy" @click="navigateTo('pharmacy')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'pharmacy'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
                             <i data-lucide="file-text" class="w-5 h-5"></i>
-                            <span>الوصفات والروشتات الطبية</span>
+                            <span>ملفات المرضى</span>
                         </a>
                         <a x-show="currentUser?.permissions?.prescriptionSettings" @click="navigateTo('prescriptionSettings')" :class="{'bg-blue-600 text-white font-semibold': currentView === 'prescriptionSettings'}" class="flex items-center px-4 py-3 rounded-xl cursor-pointer space-x-3 space-x-reverse hover:bg-[#294765]">
                             <i data-lucide="printer" class="w-5 h-5"></i>
@@ -8289,7 +8293,7 @@
                                 </button>
                                 <button x-show="currentUser?.permissions?.pharmacy" @click="navigateTo('pharmacy')" class="dashboard-action-card text-right bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-100 dark:border-cyan-900/60 p-5 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
                                     <span class="w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center mb-3"><i data-lucide="file-text" class="w-5 h-5"></i></span>
-                                    <p class="text-xs text-cyan-700 dark:text-cyan-300 font-bold">الوصفات والروشتات الطبية</p>
+                                    <p class="text-xs text-cyan-700 dark:text-cyan-300 font-bold">ملفات المرضى</p>
                                     <p class="text-sm font-bold text-cyan-600 mt-2" x-text="prescriptions.length + ' وصفة'" ></p>
                                 </button>
                                 <button x-show="currentUser?.permissions?.clinics" @click="navigateTo('clinics')" class="dashboard-action-card text-right bg-slate-50 dark:bg-slate-900 border dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all">
@@ -9284,7 +9288,7 @@
                         <div x-show="currentView === 'pharmacy'" class="space-y-5 w-full">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                 <div>
-                                    <h3 class="font-bold text-slate-800 dark:text-white text-lg">أرشيف الوصفات والروشتات الطبية</h3>
+                                    <h3 class="font-bold text-slate-800 dark:text-white text-lg">أرشيف ملفات المرضى</h3>
                                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">كل مريض يظهر في ملف واحد، ويمكن فتحه لرؤية جميع زياراته ووصفاته.</p>
                                 </div>
                                 <span class="text-xs font-bold text-blue-700 bg-blue-50 dark:bg-blue-950/30 dark:text-blue-300 px-3 py-2 rounded-xl" x-text="prescriptionGroups.length + ' ملف'" ></span>
@@ -9655,7 +9659,7 @@
                                                         <div class="min-w-0"><div class="flex items-center gap-2"><span class="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold" x-text="(user.fullName || user.email || '?').slice(0, 1)"></span><div><p class="font-bold text-sm text-slate-800 dark:text-white" x-text="user.fullName"></p><p class="text-[11px] text-slate-500 dark:text-slate-400"><span x-text="'@' + user.email"></span> · <span x-text="['admin', 'owner'].includes(user.role) ? 'مدير النظام' : user.role"></span></p></div></div></div>
                                                         <div class="flex flex-wrap items-center gap-2"><span class="text-[11px] px-2 py-1 rounded-full" :class="user.active ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'" x-text="user.active ? 'نشط' : 'موقوف'"></span><button type="button" @click="openAccountProfileEditor(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">تعديل البيانات</button><button type="button" @click="openPasswordChangeModal(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white">تغيير كلمة المرور</button></div>
                                                     </div>
-                                                    <details class="border-t border-slate-100 dark:border-slate-800"><summary class="cursor-pointer px-4 py-3 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">الصلاحيات والإدارة <i data-lucide="chevron-down" class="w-4 h-4"></i></summary><div class="p-4 pt-1 space-y-3"><p x-show="isProtectedSystemOwner(user)" class="text-[11px] leading-5 font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50 rounded-lg p-3">حساب مدير النظام محمي: لا يمكن تعديل صلاحياته أو إيقافه أو حذفه.</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-2"><template x-for="module in permissionModules" :key="module.key"><label class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 text-[11px] text-slate-700 dark:text-slate-200"><input type="checkbox" x-model="userPermissionDrafts[user.id][module.key]" :disabled="isProtectedSystemOwner(user) || user.role === 'admin'"> <span x-text="module.label"></span></label></template></div><div class="flex flex-wrap gap-2" x-show="!isProtectedSystemOwner(user)"><button type="button" @click="saveUserPermissions(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-blue-200 dark:border-blue-900/70 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30">حفظ الصلاحيات</button><button type="button" x-show="user.role !== 'admin'" @click="promoteToAdmin(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-900/70 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30">منح صلاحية مدير</button><button type="button" @click="toggleUserActive(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200" x-text="user.active ? 'إيقاف الحساب' : 'تفعيل الحساب'"></button><button type="button" @click="removeUser(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-rose-200 dark:border-rose-900/70 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30">حذف الحساب</button></div><p x-show="userSaveFeedback[user.id]" class="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">تم حفظ الصلاحيات على هذا الجهاز.</p></div></details>
+                                                    <details class="border-t border-slate-100 dark:border-slate-800"><summary class="cursor-pointer px-4 py-3 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">الصلاحيات والإدارة <i data-lucide="chevron-down" class="w-4 h-4"></i></summary><div class="p-4 pt-1 space-y-3"><p x-show="isProtectedSystemOwner(user)" class="text-[11px] leading-5 font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50 rounded-lg p-3">حساب مدير النظام محمي: لا يمكن تعديل صلاحياته أو إيقافه أو حذفه.</p><div class="grid grid-cols-2 sm:grid-cols-3 gap-2"><template x-for="module in permissionModules" :key="module.key"><label class="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 text-[11px] text-slate-700 dark:text-slate-200"><input type="checkbox" x-model="userPermissionDrafts[user.id][module.key]" :checked="Boolean(userPermissionDrafts[user.id]?.[module.key])" :disabled="isProtectedSystemOwner(user) || user.role === 'admin'" class="permission-checkbox w-4 h-4 shrink-0 rounded border-slate-400 text-blue-600 focus:ring-blue-500" style="appearance:auto; accent-color:#2563eb;"> <span x-show="Boolean(userPermissionDrafts[user.id]?.[module.key])" class="inline-flex items-center justify-center w-4 h-4 rounded bg-blue-600 text-white text-[10px] font-black leading-none">✓</span><span x-text="module.label"></span></label></template></div><div class="flex flex-wrap gap-2" x-show="!isProtectedSystemOwner(user)"><button type="button" @click="saveUserPermissions(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-blue-200 dark:border-blue-900/70 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30">حفظ الصلاحيات</button><button type="button" x-show="user.role !== 'admin'" @click="promoteToAdmin(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-900/70 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30">منح صلاحية مدير</button><button type="button" @click="toggleUserActive(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200" x-text="user.active ? 'إيقاف الحساب' : 'تفعيل الحساب'"></button><button type="button" @click="removeUser(user.id)" class="text-xs font-bold px-3 py-2 rounded-lg border border-rose-200 dark:border-rose-900/70 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30">حذف الحساب</button></div><p x-show="userSaveFeedback[user.id]" class="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">تم حفظ الصلاحيات على هذا الجهاز.</p></div></details>
                                                 </article>
                                             </template>
                                         </div>
@@ -10464,7 +10468,7 @@
     <script>
         if ('serviceWorker' in navigator && !publicBookingMode) {
             window.addEventListener('load', () => {
-                    navigator.serviceWorker.register('./sw.js?v=soli-v2.5.18-Soli3-pwa', { updateViaCache: 'none' })
+                    navigator.serviceWorker.register('./sw.js?v=soli-v2.5.19-Soli3-pwa', { updateViaCache: 'none' })
                     .then(registration => registration.update())
                     .catch(error => console.warn('Soli Medical Service Worker:', error));
             });

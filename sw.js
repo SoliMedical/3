@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soli-medical-shell-v2.5.18-Soli3';
+const CACHE_NAME = 'soli-medical-shell-v2.5.19-Soli3';
 const APP_SHELL = [
   './',
   './index.html',
